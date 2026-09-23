@@ -34,6 +34,7 @@ import {
   searchExcelFiles,
 } from './microsoft.js';
 import { READ_DRIVE_FILE_TOOL, LIST_DRIVE_FOLDER_TOOL, handleReadDriveFile, handleListDriveFolder } from './driveRead.js';
+import { enforceExecutionPolicy } from './executionPolicy.js';
 
 /** Anthropic server-side tools — executed by Anthropic, not by us */
 export const ANTHROPIC_WEB_SEARCH_TOOL = {
@@ -533,6 +534,15 @@ export async function runTool(block, user, context = {}) {
   const name = block.name;
   const input = block.input || {};
   try {
+    const policyBlock = enforceExecutionPolicy(name, input);
+    if (policyBlock) {
+      return {
+        type: 'tool_result',
+        tool_use_id: id,
+        is_error: true,
+        content: `${policyBlock.code}: ${policyBlock.message}`,
+      };
+    }
     if (name === 'search_gmail' && user) {
       const token = await getValidToken(user.id, 'gmail');
       if (!token) return gmailNotConnected(id);
