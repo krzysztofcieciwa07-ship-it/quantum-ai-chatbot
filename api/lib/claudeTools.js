@@ -355,6 +355,7 @@ export const SAVE_MEMORY_TOOL = {
     properties: {
       fact: { type: 'string' },
       category: { type: 'string', description: '"general", "preference", "instruction", "work", "people", "project", or "behavior" for a noticed interaction pattern' },
+      user_confirmed: { type: 'boolean' },
     },
     required: ['fact'],
   },
@@ -375,6 +376,7 @@ export const SAVE_NOTE_TOOL = {
       tags: { type: 'array', items: { type: 'string' }, description: 'Optional short topic tags for grouping/filtering' },
       trade_ref: { type: 'string', description: 'Optional reference (e.g. a trade/row id) this note is about, for later lookup in a connected sheet' },
       checklist: { type: 'array', items: { type: 'string' }, description: 'Optional sub-steps to break this note into a checklist' },
+      user_confirmed: { type: 'boolean' },
     },
     required: ['note'],
   },
@@ -409,6 +411,7 @@ export const UPDATE_NOTE_TOOL = {
       priority: { type: 'string', description: '"low", "medium", or "high"' },
       due_date: { type: 'string', description: 'ISO 8601 date/time, or empty string to clear it' },
       checklist: { type: 'array', items: { type: 'string' }, description: 'Replaces the whole checklist with these steps, e.g. when the user asks to add or change checklist items' },
+      user_confirmed: { type: 'boolean' },
     },
     required: ['note_id'],
   },
@@ -421,6 +424,7 @@ export const DELETE_NOTE_TOOL = {
     type: 'object',
     properties: {
       note_id: { type: 'string' },
+      user_confirmed: { type: 'boolean' },
     },
     required: ['note_id'],
   },
