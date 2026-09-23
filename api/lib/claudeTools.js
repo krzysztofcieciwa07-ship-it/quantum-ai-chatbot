@@ -34,6 +34,7 @@ import {
   searchExcelFiles,
 } from './microsoft.js';
 import { READ_DRIVE_FILE_TOOL, LIST_DRIVE_FOLDER_TOOL, handleReadDriveFile, handleListDriveFolder } from './driveRead.js';
+import { enforceExecutionPolicy } from './executionPolicy.js';
 
 /** Anthropic server-side tools — executed by Anthropic, not by us */
 export const ANTHROPIC_WEB_SEARCH_TOOL = {
@@ -142,6 +143,7 @@ export const MODIFY_GMAIL_TOOL = {
       action: { type: 'string' },
       add_labels: { type: 'array', items: { type: 'string' } },
       remove_labels: { type: 'array', items: { type: 'string' } },
+      user_confirmed: { type: 'boolean' },
     },
     required: ['message_id', 'action'],
   },
@@ -160,6 +162,7 @@ export const BULK_ARCHIVE_TOOL = {
     type: 'object',
     properties: {
       message_ids: { type: 'array', items: { type: 'string' } },
+      user_confirmed: { type: 'boolean' },
     },
     required: ['message_ids'],
   },
@@ -206,6 +209,7 @@ export const CREATE_DOC_TOOL = {
     properties: {
       title: { type: 'string' },
       body: { type: 'string' },
+      user_confirmed: { type: 'boolean' },
     },
     required: ['title'],
   },
@@ -219,6 +223,7 @@ export const APPEND_DOC_TOOL = {
     properties: {
       document_id: { type: 'string' },
       text: { type: 'string' },
+      user_confirmed: { type: 'boolean' },
     },
     required: ['document_id', 'text'],
   },
@@ -259,6 +264,7 @@ export const CREATE_SHEET_TOOL = {
       title: { type: 'string' },
       headers: { type: 'array', items: { type: 'string' } },
       rows: { type: 'array', items: { type: 'array', items: { type: 'string' } } },
+      user_confirmed: { type: 'boolean' },
     },
     required: ['title'],
   },
@@ -274,6 +280,7 @@ export const UPDATE_SHEET_TOOL = {
       range: { type: 'string' },
       values: { type: 'array', items: { type: 'array', items: { type: 'string' } } },
       append: { type: 'boolean' },
+      user_confirmed: { type: 'boolean' },
     },
     required: ['spreadsheet_id', 'values'],
   },
@@ -307,6 +314,7 @@ export const CREATE_EVENT_TOOL = {
       all_day: { type: 'boolean' },
       time_zone: { type: 'string' },
       attendees: { type: 'array', items: { type: 'string' } },
+      user_confirmed: { type: 'boolean' },
     },
     required: ['summary', 'start'],
   },
@@ -347,6 +355,7 @@ export const SAVE_MEMORY_TOOL = {
     properties: {
       fact: { type: 'string' },
       category: { type: 'string', description: '"general", "preference", "instruction", "work", "people", "project", or "behavior" for a noticed interaction pattern' },
+      user_confirmed: { type: 'boolean' },
     },
     required: ['fact'],
   },
@@ -367,6 +376,7 @@ export const SAVE_NOTE_TOOL = {
       tags: { type: 'array', items: { type: 'string' }, description: 'Optional short topic tags for grouping/filtering' },
       trade_ref: { type: 'string', description: 'Optional reference (e.g. a trade/row id) this note is about, for later lookup in a connected sheet' },
       checklist: { type: 'array', items: { type: 'string' }, description: 'Optional sub-steps to break this note into a checklist' },
+      user_confirmed: { type: 'boolean' },
     },
     required: ['note'],
   },
@@ -401,6 +411,7 @@ export const UPDATE_NOTE_TOOL = {
       priority: { type: 'string', description: '"low", "medium", or "high"' },
       due_date: { type: 'string', description: 'ISO 8601 date/time, or empty string to clear it' },
       checklist: { type: 'array', items: { type: 'string' }, description: 'Replaces the whole checklist with these steps, e.g. when the user asks to add or change checklist items' },
+      user_confirmed: { type: 'boolean' },
     },
     required: ['note_id'],
   },
@@ -413,6 +424,7 @@ export const DELETE_NOTE_TOOL = {
     type: 'object',
     properties: {
       note_id: { type: 'string' },
+      user_confirmed: { type: 'boolean' },
     },
     required: ['note_id'],
   },
@@ -533,6 +545,15 @@ export async function runTool(block, user, context = {}) {
   const name = block.name;
   const input = block.input || {};
   try {
+    const policyBlock = enforceExecutionPolicy(name, input);
+    if (policyBlock) {
+      return {
+        type: 'tool_result',
+        tool_use_id: id,
+        is_error: true,
+        content: `${policyBlock.code}: ${policyBlock.message}`,
+      };
+    }
     if (name === 'search_gmail' && user) {
       const token = await getValidToken(user.id, 'gmail');
       if (!token) return gmailNotConnected(id);
