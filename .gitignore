@@ -25,4 +25,8 @@ dist-ssr
 *.sw?
 
 .env
+
+# Environment files: ignore all local variants except the committed template
+.env.*
+!.env.example
 .env.local
