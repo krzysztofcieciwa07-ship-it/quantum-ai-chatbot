@@ -1,5 +1,6 @@
 import { PROVIDER_SCOPES, getGoogleConfig, buildAuthUrl } from '../lib/google.js';
-import { getUserFromAuthHeader } from '../lib/supabaseAdmin.js';
+import { getAdminClient, getUserFromAuthHeader } from '../lib/supabaseAdmin.js';
+import { issueOAuthState, setOAuthStateCookie } from '../lib/oauthState.js';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -15,27 +16,18 @@ export default async function handler(req, res) {
 
     const provider = (req.query?.provider || 'gmail').toString();
     if (!PROVIDER_SCOPES[provider]) {
-      return res.status(400).json({ error: `Unknown provider: ${provider}` });
+      return res.status(400).json({ error: 'Unknown Google connector' });
     }
 
     const { clientId, clientSecret, appUrl } = getGoogleConfig();
-    if (!clientId || !clientSecret) {
-      return res.status(500).json({
-        error: 'Google OAuth not configured',
-        hint: 'Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Vercel env vars',
-      });
-    }
-    if (!appUrl) {
-      return res.status(500).json({
-        error: 'APP_URL not set',
-        hint: 'Set APP_URL to your deployed site, e.g. https://quantumy-ai.vercel.app',
-      });
+    if (!clientId || !clientSecret || !appUrl) {
+      return res.status(500).json({ error: 'Google OAuth is not configured' });
     }
 
     const redirectUri = `${appUrl}/api/connectors/google-callback`;
-    const state = Buffer.from(
-      JSON.stringify({ userId: user.id, provider, t: Date.now() })
-    ).toString('base64url');
+    const admin = getAdminClient();
+    const state = await issueOAuthState(admin, { userId: user.id, connectorProvider: provider });
+    setOAuthStateCookie(res, { provider: 'google', state, appUrl });
 
     const url = buildAuthUrl({
       clientId,
@@ -47,6 +39,6 @@ export default async function handler(req, res) {
     return res.status(200).json({ url });
   } catch (err) {
     console.error('google-start error:', err);
-    return res.status(500).json({ error: err.message || 'Internal error' });
+    return res.status(500).json({ error: 'Could not start Google OAuth' });
   }
 }

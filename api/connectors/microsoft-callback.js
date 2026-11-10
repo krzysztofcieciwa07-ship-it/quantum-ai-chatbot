@@ -5,60 +5,78 @@ import {
   getMicrosoftEmail,
 } from '../lib/microsoft.js';
 import { getAdminClient } from '../lib/supabaseAdmin.js';
+import {
+  consumeOAuthState,
+  readOAuthStateCookie,
+  clearOAuthStateCookie,
+} from '../lib/oauthState.js';
 
 export default async function handler(req, res) {
-  const home = (process.env.APP_URL || '').replace(/\/$/, '') || '/';
+  if (req.method !== 'GET') return res.status(405).send('Method not allowed');
+
+  const { appUrl, clientId, clientSecret, tenant } = getMicrosoftConfig();
+  const home = appUrl || '/';
+  const cookieState = readOAuthStateCookie(req, 'microsoft');
+  if (appUrl) clearOAuthStateCookie(res, { provider: 'microsoft', appUrl });
+
   try {
     const code = req.query?.code;
-    const stateRaw = req.query?.state;
-    const err = req.query?.error;
-    if (err) return res.redirect(`${home}?connector_error=${encodeURIComponent(String(err))}`);
-    if (!code || !stateRaw) return res.redirect(`${home}?connector_error=missing_code`);
-
-    let state;
-    try {
-      state = JSON.parse(Buffer.from(String(stateRaw), 'base64url').toString('utf8'));
-    } catch {
-      return res.redirect(`${home}?connector_error=bad_state`);
+    const state = req.query?.state;
+    const oauthError = req.query?.error;
+    if (oauthError) return res.redirect(`${home}?connector_error=microsoft_authorization_denied`);
+    if (typeof code !== 'string' || !code || typeof state !== 'string' || !state) {
+      return res.redirect(`${home}?connector_error=missing_code_or_state`);
     }
-    const { userId, provider } = state;
-    if (!userId || !MS_PROVIDER_SCOPES[provider]) {
-      return res.redirect(`${home}?connector_error=invalid_state`);
+    if (!appUrl || !clientId || !clientSecret) {
+      return res.redirect(`${home}?connector_error=oauth_not_configured`);
     }
 
-    const { clientId, clientSecret, appUrl, tenant } = getMicrosoftConfig();
-    const redirectUri = `${appUrl}/api/connectors/microsoft-callback`;
+    const admin = getAdminClient();
+    const identity = await consumeOAuthState(admin, { state, cookieState, provider: 'microsoft' });
+    if (!identity || !MS_PROVIDER_SCOPES[identity.connectorProvider]) {
+      return res.redirect(`${home}?connector_error=invalid_or_replayed_state`);
+    }
+
     const tokens = await exchangeMicrosoftCode({
       clientId,
       clientSecret,
-      code: String(code),
-      redirectUri,
+      code,
+      redirectUri: `${appUrl}/api/connectors/microsoft-callback`,
       tenant,
     });
 
     const email = await getMicrosoftEmail(tokens.access_token);
-    const admin = getAdminClient();
     const expiresAt = tokens.expires_in
       ? new Date(Date.now() + tokens.expires_in * 1000).toISOString()
       : null;
 
-    await admin.from('connectors').upsert(
+    const { data: existing, error: lookupError } = await admin
+      .from('connectors')
+      .select('refresh_token')
+      .eq('user_id', identity.userId)
+      .eq('provider', identity.connectorProvider)
+      .maybeSingle();
+    if (lookupError) throw new Error('Could not read existing connector state');
+
+    const { error } = await admin.from('connectors').upsert(
       {
-        user_id: userId,
-        provider,
+        user_id: identity.userId,
+        provider: identity.connectorProvider,
         account_email: email,
         status: 'connected',
         access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token || null,
+        refresh_token: tokens.refresh_token || existing?.refresh_token || null,
         token_expires_at: expiresAt,
-        scopes: MS_PROVIDER_SCOPES[provider],
+        scopes: MS_PROVIDER_SCOPES[identity.connectorProvider],
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'user_id,provider' }
     );
+    if (error) throw new Error('Could not save Microsoft connector');
 
-    return res.redirect(`${home}?connected=${provider}`);
-  } catch (e) {
-    return res.redirect(`${home}?connector_error=${encodeURIComponent(e.message || 'ms_callback')}`);
+    return res.redirect(`${home}?connected=${encodeURIComponent(identity.connectorProvider)}`);
+  } catch (err) {
+    console.error('microsoft-callback error:', err);
+    return res.redirect(`${home}?connector_error=callback_failed`);
   }
 }

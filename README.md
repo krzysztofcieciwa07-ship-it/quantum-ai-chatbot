@@ -19,49 +19,27 @@ Run the conversations/messages SQL from the earlier setup (or see git history).
 
 ### 2. Supabase — Connectors table
 
-**SQL Editor → New query → run** `supabase/connectors.sql` (also below):
+**SQL Editor → New query → run** `supabase/connectors.sql`.
 
-```sql
-create table if not exists public.connectors (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users(id) on delete cascade not null,
-  provider text not null check (provider in ('gmail', 'google_drive', 'google_sheets')),
-  account_email text,
-  access_token text,
-  refresh_token text,
-  token_expires_at timestamptz,
-  scopes text[] default '{}',
-  status text not null default 'connected' check (status in ('connected', 'error', 'revoked')),
-  created_at timestamptz default now() not null,
-  updated_at timestamptz default now() not null,
-  unique (user_id, provider)
-);
+This grants authenticated users access only to connector metadata. Access and refresh tokens remain readable by the server-side service role only.
 
-create index if not exists connectors_user_id_idx on public.connectors(user_id);
-alter table public.connectors enable row level security;
+### 3. Supabase — OAuth security migration
 
-create policy "Users can view own connectors"
-  on public.connectors for select using (auth.uid() = user_id);
+**SQL Editor → New query → run** `supabase/oauth-security.sql` for existing projects before deploying the OAuth callback changes. It creates the server-only, expiring one-time OAuth state store and applies the connector token column grants. Apply it after `connectors.sql` if setting up a new project.
 
-create policy "Users can delete own connectors"
-  on public.connectors for delete using (auth.uid() = user_id);
-```
-
-### 3. Google Cloud OAuth (for Gmail connector)
+### 4. Google Cloud OAuth (for Gmail connector)
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Create/select a project
 3. **APIs & Services → Enable APIs**: Gmail API
-4. **OAuth consent screen** → External → add scopes:
-   - `.../auth/gmail.readonly`
-   - `.../auth/userinfo.email`
+4. **OAuth consent screen** → External → add the required Gmail and userinfo scopes for the connectors you enable
 5. **Credentials → Create OAuth client ID** → Web application
 6. Authorized redirect URIs:
    - `https://YOUR-APP.vercel.app/api/connectors/google-callback`
-   - `http://localhost:5173/api/connectors/google-callback` (local, if testing API)
+   - `http://localhost:5173/api/connectors/google-callback` (local development only)
 7. Copy **Client ID** and **Client Secret**
 
-### 4. Environment variables
+### 5. Environment variables
 
 **Vercel → Project → Settings → Environment Variables:**
 
@@ -73,32 +51,38 @@ create policy "Users can delete own connectors"
 | `SUPABASE_SERVICE_ROLE_KEY` | Server (Supabase → Settings → API) |
 | `GOOGLE_CLIENT_ID` | Server |
 | `GOOGLE_CLIENT_SECRET` | Server |
+| `MICROSOFT_CLIENT_ID` | Server, when Microsoft connectors are enabled |
+| `MICROSOFT_CLIENT_SECRET` | Server, when Microsoft connectors are enabled |
 | `APP_URL` | Server, e.g. `https://quantumy-xi.vercel.app` |
 
 Redeploy after adding env vars.
 
-### 5. Run locally
+### 6. Run locally
 
 ```bash
 npm install
+npm test
+npm run build
 npm run dev
 ```
 
-Note: OAuth callback and tool APIs need the Vercel deployment (or a local serverless adapter). Connect Gmail on the production URL.
+Note: OAuth callback and tool APIs need the Vercel deployment (or a local serverless adapter). Connectors use browser-bound state cookies; local HTTP is supported only for localhost.
 
 ## How Connectors work
 
 1. Settings → **Connectors** → **Connect** on Gmail
-2. User is sent to Google and only asked for Gmail read access
-3. Tokens stored in `connectors` (server uses service role)
-4. When the user asks about email, Claude can call `search_gmail`
-5. **Disconnect** removes the row and access
+2. User is sent to Google and only asked for the requested connector scopes
+3. The server persists only a SHA-256 digest of a random, expiring OAuth state token, bound to an HttpOnly SameSite=Lax cookie and the initiating user/provider
+4. The callback validates and atomically consumes the state before exchanging the authorization code
+5. Tokens are stored in `connectors` and accessed by server-side routes using the service role
+6. **Disconnect** removes the row and access
 
 Drive / Sheets buttons are visible but marked **Soon** — same pattern when you enable them.
 
 ## Security
 
-- Anthropic + Google client secret stay on the server
-- Service role is only used in API routes
-- Client only selects non-token columns from `connectors`
+- Anthropic and Google/Microsoft client secrets stay on the server
+- The service role is only used in API routes
+- Authenticated clients can SELECT only non-token connector columns; token columns are server-only after the SQL migrations are applied
+- OAuth state is random, short-lived, provider-bound, browser-bound and one-time
 - Each connector is opt-in with minimal scopes
