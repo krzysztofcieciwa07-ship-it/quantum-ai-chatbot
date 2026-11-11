@@ -1,104 +1,83 @@
-# Quantum AI Chatbot
+# Quantumy
 
-Premium mobile-first AI chatbot with **Supabase Auth**, **conversation history**, and **granular Connectors** (Gmail first).
+Mobile-first AI workspace built with React, Vite, TypeScript, Vercel serverless functions, and Supabase.
 
-## Features
+**Repository status: ACTIVE APPLICATION / NOT SECURITY-CERTIFIED**
 
-- Smooth mobile-first UI (dark/light)
-- Supabase email/password auth
-- Persistent chat history per user
-- **Connectors**: connect Gmail alone (Drive & Sheets coming next)
-- AI can search connected Gmail via tool calling
-- Secure Anthropic proxy (API key never in the browser)
+This repository contains application source and a small automated test suite. Passing CI proves only that the configured tests and build completed on the tested commit. It does not establish the security of OAuth, connector-token storage, tenant isolation, or a production deployment.
 
-## Setup
+## Technology
 
-### 1. Supabase — Phase 1 tables
+- React 18, Vite, TypeScript
+- Vercel serverless API routes
+- Supabase authentication and persistence
+- Anthropic API and registered tool execution
+- Google connector routes and additional provider integrations
+- Node.js 22 or newer
 
-Run the conversations/messages SQL from the earlier setup (or see git history).
+## Repository map
 
-### 2. Supabase — Connectors table
+- \`src/\` — browser application and UI.
+- \`api/\` — server-side Vercel functions.
+- \`api/lib/\` — provider clients, Supabase admin access, rate limiting, and execution policy.
+- \`api/connectors/\` — OAuth start, callback, and disconnect handlers.
+- \`supabase/\` — SQL setup scripts for application tables and security-related records.
+- \`test/\` — Node.js built-in test runner tests.
+- \`scripts/inflate-app.cjs\` — regenerates \`src/App.tsx\` from the compressed source payload when present.
+- \`.github/workflows/security-gate.yml\` — CI test and build workflow.
 
-**SQL Editor → New query → run** `supabase/connectors.sql` (also below):
+**Generated frontend source:** \`predev\` and \`prebuild\` invoke \`scripts/inflate-app.cjs\`. When \`src/App.tsx.zlib.b64\` exists, the script overwrites \`src/App.tsx\`. Check the compressed source before editing the generated file, or your changes may be lost on the next dev/build command.
 
-```sql
-create table if not exists public.connectors (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users(id) on delete cascade not null,
-  provider text not null check (provider in ('gmail', 'google_drive', 'google_sheets')),
-  account_email text,
-  access_token text,
-  refresh_token text,
-  token_expires_at timestamptz,
-  scopes text[] default '{}',
-  status text not null default 'connected' check (status in ('connected', 'error', 'revoked')),
-  created_at timestamptz default now() not null,
-  updated_at timestamptz default now() not null,
-  unique (user_id, provider)
-);
+## Local setup
 
-create index if not exists connectors_user_id_idx on public.connectors(user_id);
-alter table public.connectors enable row level security;
+Use Node.js 22 or newer and npm:
 
-create policy "Users can view own connectors"
-  on public.connectors for select using (auth.uid() = user_id);
-
-create policy "Users can delete own connectors"
-  on public.connectors for delete using (auth.uid() = user_id);
-```
-
-### 3. Google Cloud OAuth (for Gmail connector)
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create/select a project
-3. **APIs & Services → Enable APIs**: Gmail API
-4. **OAuth consent screen** → External → add scopes:
-   - `.../auth/gmail.readonly`
-   - `.../auth/userinfo.email`
-5. **Credentials → Create OAuth client ID** → Web application
-6. Authorized redirect URIs:
-   - `https://YOUR-APP.vercel.app/api/connectors/google-callback`
-   - `http://localhost:5173/api/connectors/google-callback` (local, if testing API)
-7. Copy **Client ID** and **Client Secret**
-
-### 4. Environment variables
-
-**Vercel → Project → Settings → Environment Variables:**
-
-| Name | Where |
-|------|--------|
-| `VITE_SUPABASE_URL` | Client + server |
-| `VITE_SUPABASE_ANON_KEY` | Client |
-| `ANTHROPIC_API_KEY` | Server |
-| `SUPABASE_SERVICE_ROLE_KEY` | Server (Supabase → Settings → API) |
-| `GOOGLE_CLIENT_ID` | Server |
-| `GOOGLE_CLIENT_SECRET` | Server |
-| `APP_URL` | Server, e.g. `https://quantumy-xi.vercel.app` |
-
-Redeploy after adding env vars.
-
-### 5. Run locally
-
-```bash
-npm install
+~~~bash
+nvm install 22
+nvm use 22
+npm ci
+cp .env.example .env.local
 npm run dev
-```
+~~~
 
-Note: OAuth callback and tool APIs need the Vercel deployment (or a local serverless adapter). Connect Gmail on the production URL.
+Fill \`.env.local\` with local development values. Never commit it.
 
-## How Connectors work
+## Required checks
 
-1. Settings → **Connectors** → **Connect** on Gmail
-2. User is sent to Google and only asked for Gmail read access
-3. Tokens stored in `connectors` (server uses service role)
-4. When the user asks about email, Claude can call `search_gmail`
-5. **Disconnect** removes the row and access
+Run the same commands used by CI:
 
-Drive / Sheets buttons are visible but marked **Soon** — same pattern when you enable them.
+~~~bash
+npm test
+npm run build
+~~~
 
-## Security
+\`npm test\` uses Node's built-in test runner. \`npm run build\` runs the TypeScript project build and Vite production build.
 
-- Anthropic + Google client secret stay on the server
-- Service role is only used in API routes
-- Client only selects non-token columns from `connectors`
-- Each connector is opt-in with minimal scopes
+## Environment variables
+
+The names and safe placeholders are listed in \`.env.example\`.
+
+- \`VITE_*\` values are bundled into browser-facing code. Only public client configuration belongs there.
+- Server-only credentials such as \`ANTHROPIC_API_KEY\`, \`SUPABASE_SERVICE_ROLE_KEY\`, Google client secrets, RISC private keys, cron secrets, and provider API keys must remain server-side.
+- Do not copy a service-role key or private signing key into any \`VITE_*\` variable.
+- Use Vercel project environment settings or a local secret manager for deployed/server credentials.
+
+## Supabase setup
+
+The \`supabase/\` directory contains SQL scripts. Review each script and its dependencies before applying it to a project. These files are not automatically applied by \`npm ci\`, the build, or the Vercel deployment.
+
+Keep Row Level Security enabled for user-facing tables. Service-role access is server-only and must be scoped in the API layer. Do not assume that an RLS policy alone protects a table from privileged server-side code.
+
+## Deployment
+
+The repository includes \`vercel.json\` with API rewrites, function duration settings, cache headers, and a scheduled notes-reminder function. Verify Vercel project configuration and required environment variables separately; a successful local build is not proof of a successful deployment.
+
+## Security and known limitations
+
+- External write actions are guarded by an execution-confirmation policy and covered by unit tests. The tests cover the listed policy cases, not every application workflow.
+- OAuth callback state and connector-token access are being hardened in the separate draft [PR #2](https://github.com/krzysztofcieciwa07-ship-it/quantum-ai-chatbot/pull/2). Until that work is merged and independently verified, do not claim the complete OAuth flow is production-secure.
+- The Security Gate currently runs \`npm test\` and \`npm run build\`. It is not a full SAST, dependency-risk, penetration, or runtime assurance program.
+- The latest inspected CI install reported four dependency advisories (two moderate and two high). Review and remediate them through tested dependency updates; do not use \`npm audit fix --force\` blindly.
+- No LICENSE file is currently present. GitHub visibility does not grant a license to reuse or redistribute the code.
+
+Read [SECURITY.md](SECURITY.md), [CONTRIBUTING.md](CONTRIBUTING.md), and [docs/ENGINEERING_STANDARD.md](docs/ENGINEERING_STANDARD.md) before changing security-sensitive behavior.
