@@ -23,7 +23,7 @@ Include the affected commit SHA, impact, sanitized reproduction, and relevant wo
 
 ## Known gaps
 
-- OAuth state binding and connector-token column access are under review in draft PR #2. Treat this boundary as incomplete until the PR is merged and its end-to-end checks pass.
+- OAuth state binding and connector-token column access are being hardened in a separate security change. Treat this boundary as incomplete until that change is merged, the SQL migration is applied, and deployed end-to-end checks pass.
 - The current automated gate runs the Node test suite and TypeScript/Vite build; it does not perform a complete security assessment.
 - The last inspected dependency installation reported four npm advisories (two moderate, two high). These require triage and verified remediation.
 
