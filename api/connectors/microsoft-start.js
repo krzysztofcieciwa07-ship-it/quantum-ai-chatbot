@@ -1,6 +1,7 @@
 import { MS_PROVIDER_SCOPES, getMicrosoftConfig, buildMicrosoftAuthUrl } from '../lib/microsoft.js';
 import { getAdminClient, getUserFromAuthHeader } from '../lib/supabaseAdmin.js';
 import { issueOAuthState, setOAuthStateCookie } from '../lib/oauthState.js';
+import { allowRequest } from '../lib/rateLimit.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
@@ -8,6 +9,9 @@ export default async function handler(req, res) {
   try {
     const user = await getUserFromAuthHeader(req);
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
+    if (!allowRequest(`oauth-start:microsoft:${user.id}`, 5, 10 * 60 * 1000)) {
+      return res.status(429).json({ error: 'Too many OAuth attempts; try again later' });
+    }
 
     const provider = (req.query?.provider || 'outlook').toString();
     if (!MS_PROVIDER_SCOPES[provider]) {
