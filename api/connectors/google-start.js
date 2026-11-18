@@ -1,6 +1,7 @@
 import { PROVIDER_SCOPES, getGoogleConfig, buildAuthUrl } from '../lib/google.js';
 import { getAdminClient, getUserFromAuthHeader } from '../lib/supabaseAdmin.js';
 import { issueOAuthState, setOAuthStateCookie } from '../lib/oauthState.js';
+import { allowRequest } from '../lib/rateLimit.js';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -13,6 +14,9 @@ export default async function handler(req, res) {
   try {
     const user = await getUserFromAuthHeader(req);
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
+    if (!allowRequest(`oauth-start:google:${user.id}`, 5, 10 * 60 * 1000)) {
+      return res.status(429).json({ error: 'Too many OAuth attempts; try again later' });
+    }
 
     const provider = (req.query?.provider || 'gmail').toString();
     if (!PROVIDER_SCOPES[provider]) {
