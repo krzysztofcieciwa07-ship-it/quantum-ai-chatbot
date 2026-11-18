@@ -8,8 +8,13 @@ import {
   clearOAuthStateCookie,
 } from '../api/lib/oauthState.js';
 
-function fakeAdmin(initialRow = null) {
-  const state = { row: initialRow, fromCalls: 0 };
+function fakeAdmin(initialRows = []) {
+  const state = { rows: initialRows.map((row) => ({ ...row })), fromCalls: 0 };
+  const matches = (row, filters) => Object.entries(filters).every(([key, value]) => {
+    if (key.endsWith('_lte')) return row[key.slice(0, -4)] <= value;
+    return row[key] === value;
+  });
+
   const admin = {
     from(table) {
       assert.equal(table, 'oauth_states');
@@ -17,7 +22,7 @@ function fakeAdmin(initialRow = null) {
       const filters = {};
       return {
         insert: async (row) => {
-          state.row = row;
+          state.rows.push({ ...row });
           return { error: null };
         },
         delete() {
@@ -27,25 +32,30 @@ function fakeAdmin(initialRow = null) {
           filters[column] = value;
           return this;
         },
-        gt(column, value) {
-          filters[`${column}_gt`] = value;
+        lte(column, value) {
+          filters[`${column}_lte`] = value;
           return this;
         },
         select() {
           return this;
         },
         maybeSingle: async () => {
-          const row = state.row;
-          const valid = row
-            && row.state_hash === filters.state_hash
-            && row.provider === filters.provider
-            && row.expires_at > filters.expires_at_gt;
-          if (!valid) return { data: null, error: null };
-          state.row = null;
+          const index = state.rows.findIndex((row) => matches(row, filters));
+          if (index < 0) return { data: null, error: null };
+          const [row] = state.rows.splice(index, 1);
           return {
-            data: { user_id: row.user_id, connector_provider: row.connector_provider },
+            data: {
+              user_id: row.user_id,
+              connector_provider: row.connector_provider,
+              expires_at: row.expires_at,
+            },
             error: null,
           };
+        },
+        then(resolve, reject) {
+          const before = state.rows.length;
+          state.rows = state.rows.filter((row) => !matches(row, filters));
+          return Promise.resolve({ error: null, count: before - state.rows.length }).then(resolve, reject);
         },
       };
     },
@@ -66,12 +76,29 @@ test('issueOAuthState persists only a SHA-256 digest and binds provider identity
   });
 
   assert.match(token, /^[A-Za-z0-9_-]{43}$/);
-  assert.notEqual(state.row.state_hash, token);
-  assert.match(state.row.state_hash, /^[0-9a-f]{64}$/);
-  assert.equal(state.row.user_id, 'user-123');
-  assert.equal(state.row.provider, 'google');
-  assert.equal(state.row.connector_provider, 'gmail');
-  assert.equal(Date.parse(state.row.expires_at), 601_000);
+  assert.notEqual(state.rows[0].state_hash, token);
+  assert.match(state.rows[0].state_hash, /^[0-9a-f]{64}$/);
+  assert.equal(state.rows[0].user_id, 'user-123');
+  assert.equal(state.rows[0].provider, 'google');
+  assert.equal(state.rows[0].connector_provider, 'gmail');
+  assert.equal(Date.parse(state.rows[0].expires_at), 601_000);
+});
+
+test('issueOAuthState prunes expired rows before inserting a new state', async () => {
+  const { admin, state } = fakeAdmin([
+    { state_hash: 'a'.repeat(64), expires_at: new Date(500).toISOString() },
+    { state_hash: 'b'.repeat(64), expires_at: new Date(2_000).toISOString() },
+  ]);
+
+  await issueOAuthState(admin, {
+    userId: 'user-123',
+    connectorProvider: 'gmail',
+    now: 1_000,
+  });
+
+  assert.equal(state.rows.length, 2);
+  assert.equal(state.rows.some((row) => row.state_hash === 'a'.repeat(64)), false);
+  assert.equal(state.rows.some((row) => row.state_hash === 'b'.repeat(64)), true);
 });
 
 test('OAuth state is rejected when callback browser cookie does not match', async () => {
@@ -89,11 +116,10 @@ test('OAuth state is rejected when callback browser cookie does not match', asyn
   });
 
   assert.equal(consumed, null);
-  assert.notEqual(state.row, null);
-  assert.equal(state.fromCalls, 1);
+  assert.equal(state.rows.length, 1);
 });
 
-test('OAuth state is one-time, provider-bound and expires', async () => {
+test('OAuth state is provider-bound, one-time and expired state is deleted', async () => {
   const { admin, state } = fakeAdmin();
   const token = await issueOAuthState(admin, {
     userId: 'user-456',
@@ -104,18 +130,30 @@ test('OAuth state is one-time, provider-bound and expires', async () => {
   assert.equal(await consumeOAuthState(admin, {
     state: token, cookieState: token, provider: 'google', now: 11_000,
   }), null);
-  assert.notEqual(state.row, null);
+  assert.equal(state.rows.length, 1);
 
   assert.equal(await consumeOAuthState(admin, {
     state: token, cookieState: token, provider: 'microsoft', now: 700_000,
   }), null);
-  assert.notEqual(state.row, null);
+  assert.equal(state.rows.length, 0);
+
+  assert.equal(await consumeOAuthState(admin, {
+    state: token, cookieState: token, provider: 'microsoft', now: 11_000,
+  }), null);
+});
+
+test('valid OAuth state is consumed exactly once', async () => {
+  const { admin, state } = fakeAdmin();
+  const token = await issueOAuthState(admin, {
+    userId: 'user-789',
+    connectorProvider: 'outlook',
+    now: 10_000,
+  });
 
   assert.deepEqual(await consumeOAuthState(admin, {
     state: token, cookieState: token, provider: 'microsoft', now: 11_000,
-  }), { userId: 'user-456', connectorProvider: 'outlook' });
-  assert.equal(state.row, null);
-
+  }), { userId: 'user-789', connectorProvider: 'outlook' });
+  assert.equal(state.rows.length, 0);
   assert.equal(await consumeOAuthState(admin, {
     state: token, cookieState: token, provider: 'microsoft', now: 12_000,
   }), null);
