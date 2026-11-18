@@ -19,11 +19,12 @@ Include the affected commit SHA, impact, sanitized reproduction, and relevant wo
 - External writes and destructive actions require explicit user confirmation at the server-side execution boundary.
 - Rate limits, input limits, provider timeouts, and outbound destination restrictions must be explicit.
 - Unknown, invalid, or missing authorization state fails closed.
+- OAuth state rows are removed by a restricted scheduled cleanup routine; start-route rate limiting is best-effort per serverless instance and must not be treated as a global abuse-control boundary.
 - CI success proves only the commands and scenarios that actually ran.
 
 ## Known gaps
 
-- OAuth state binding and connector-token column access are under review in draft PR #2. Treat this boundary as incomplete until the PR is merged and its end-to-end checks pass.
+- OAuth state binding and connector-token column access are being hardened in a separate security change. Treat this boundary as incomplete until that change is merged, the SQL migration is applied, and deployed end-to-end checks pass.
 - The current automated gate runs the Node test suite and TypeScript/Vite build; it does not perform a complete security assessment.
 - The last inspected dependency installation reported four npm advisories (two moderate, two high). These require triage and verified remediation.
 

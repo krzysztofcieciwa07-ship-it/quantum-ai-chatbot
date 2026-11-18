@@ -68,6 +68,11 @@ The \`supabase/\` directory contains SQL scripts. Review each script and its dep
 
 Keep Row Level Security enabled for user-facing tables. Service-role access is server-only and must be scoped in the API layer. Do not assume that an RLS policy alone protects a table from privileged server-side code.
 
+
+## OAuth connector security migration
+
+For existing Supabase projects, review and apply `supabase/oauth-security.sql` after `supabase/connectors.sql` and before deploying the hardened OAuth callbacks. The migration creates a server-only, expiring, one-time OAuth state store, restricts authenticated access to connector metadata columns, and enables a `pg_cron` job that removes expired state rows every 15 minutes in bounded batches. OAuth start routes also prune expired rows opportunistically and apply a best-effort per-instance rate limit; this is not a globally coordinated abuse-control system. Verify the Cron job and effective grants in Supabase, then test the callbacks in a non-production project before production rollout.
+
 ## Deployment
 
 The repository includes \`vercel.json\` with API rewrites, function duration settings, cache headers, and a scheduled notes-reminder function. Verify Vercel project configuration and required environment variables separately; a successful local build is not proof of a successful deployment.
@@ -75,7 +80,7 @@ The repository includes \`vercel.json\` with API rewrites, function duration set
 ## Security and known limitations
 
 - External write actions are guarded by an execution-confirmation policy and covered by unit tests. The tests cover the listed policy cases, not every application workflow.
-- OAuth callback state and connector-token access are being hardened in the separate draft [PR #2](https://github.com/krzysztofcieciwa07-ship-it/quantum-ai-chatbot/pull/2). Until that work is merged and independently verified, do not claim the complete OAuth flow is production-secure.
+- OAuth callback state and connector-token access are covered by a security change under review. Do not claim the complete OAuth flow is production-secure until the change is merged, the required SQL migration is applied, and deployed callbacks are verified.
 - The Security Gate currently runs \`npm test\` and \`npm run build\`. It is not a full SAST, dependency-risk, penetration, or runtime assurance program.
 - The latest inspected CI install reported four dependency advisories (two moderate and two high). Review and remediate them through tested dependency updates; do not use \`npm audit fix --force\` blindly.
 - No LICENSE file is currently present. GitHub visibility does not grant a license to reuse or redistribute the code.

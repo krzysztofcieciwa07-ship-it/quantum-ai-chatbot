@@ -1,5 +1,5 @@
 -- Phase 2: Connectors
--- Run this in Supabase → SQL Editor
+-- Run this in Supabase -> SQL Editor.
 
 create table if not exists public.connectors (
   id uuid primary key default gen_random_uuid(),
@@ -16,32 +16,30 @@ create table if not exists public.connectors (
   unique (user_id, provider)
 );
 
--- Expand allowed providers if table already existed with a tight check constraint
 alter table public.connectors drop constraint if exists connectors_provider_check;
 alter table public.connectors
   add constraint connectors_provider_check
   check (provider in (
-    'gmail',
-    'google_drive',
-    'google_docs',
-    'google_sheets',
-    'google_calendar',
-    'outlook',
-    'excel'
+    'gmail', 'google_drive', 'google_docs', 'google_sheets',
+    'google_calendar', 'outlook', 'excel'
   ));
 
 create index if not exists connectors_user_id_idx on public.connectors(user_id);
-
 alter table public.connectors enable row level security;
 
 drop policy if exists "Users can view own connectors" on public.connectors;
 create policy "Users can view own connectors"
-  on public.connectors for select
-  using (auth.uid() = user_id);
+  on public.connectors for select using (auth.uid() = user_id);
 
 drop policy if exists "Users can delete own connectors" on public.connectors;
 create policy "Users can delete own connectors"
-  on public.connectors for delete
-  using (auth.uid() = user_id);
+  on public.connectors for delete using (auth.uid() = user_id);
 
--- Inserts/updates are done by the server with the service role key only.
+-- Tokens are server-only. RLS restricts rows; column grants restrict fields.
+revoke all privileges on table public.connectors from PUBLIC, anon, authenticated;
+revoke select (access_token, refresh_token, token_expires_at)
+  on table public.connectors from PUBLIC, anon, authenticated;
+grant select (id, user_id, provider, account_email, scopes, status, created_at, updated_at)
+  on table public.connectors to authenticated;
+grant delete on table public.connectors to authenticated;
+grant all privileges on table public.connectors to service_role;
