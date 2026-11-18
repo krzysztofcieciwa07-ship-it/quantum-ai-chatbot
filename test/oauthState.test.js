@@ -16,6 +16,17 @@ function fakeAdmin(initialRows = []) {
   });
 
   const admin = {
+    rpc: async (name, args) => {
+      assert.equal(name, 'cleanup_expired_oauth_states');
+      const cutoff = args?.p_now;
+      const expired = state.rows
+        .filter((row) => row.expires_at <= cutoff)
+        .sort((left, right) => left.expires_at.localeCompare(right.expires_at))
+        .slice(0, 1_000);
+      const expiredHashes = new Set(expired.map((row) => row.state_hash));
+      state.rows = state.rows.filter((row) => !expiredHashes.has(row.state_hash));
+      return { data: expired.length, error: null };
+    },
     from(table) {
       assert.equal(table, 'oauth_states');
       state.fromCalls += 1;
