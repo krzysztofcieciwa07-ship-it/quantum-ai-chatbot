@@ -33,6 +33,14 @@ export async function issueOAuthState(admin, { userId, connectorProvider, now = 
 
   const state = randomBytes(32).toString('base64url');
   const expiresAt = new Date(now + STATE_TTL_MS).toISOString();
+
+  // Opportunistically prune expired rows on every new OAuth attempt.
+  const { error: cleanupError } = await admin
+    .from('oauth_states')
+    .delete()
+    .lte('expires_at', new Date(now).toISOString());
+  if (cleanupError) throw new Error('Could not clean expired OAuth state');
+
   const { error } = await admin.from('oauth_states').insert({
     state_hash: hashState(state),
     user_id: userId,
@@ -64,12 +72,16 @@ export async function consumeOAuthState(
     .delete()
     .eq('state_hash', hashState(state))
     .eq('provider', provider)
-    .gt('expires_at', new Date(now).toISOString())
-    .select('user_id, connector_provider')
+    .select('user_id, connector_provider, expires_at')
     .maybeSingle();
 
   if (error) throw new Error('Could not consume OAuth state');
-  if (!data?.user_id || providerGroup(data.connector_provider) !== provider) return null;
+  if (
+    !data?.user_id
+    || !Number.isFinite(Date.parse(data.expires_at))
+    || Date.parse(data.expires_at) <= now
+    || providerGroup(data.connector_provider) !== provider
+  ) return null;
 
   return { userId: data.user_id, connectorProvider: data.connector_provider };
 }
