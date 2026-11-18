@@ -35,10 +35,9 @@ export async function issueOAuthState(admin, { userId, connectorProvider, now = 
   const expiresAt = new Date(now + STATE_TTL_MS).toISOString();
 
   // Opportunistically prune expired rows on every new OAuth attempt.
-  const { error: cleanupError } = await admin
-    .from('oauth_states')
-    .delete()
-    .lte('expires_at', new Date(now).toISOString());
+  const { error: cleanupError } = await admin.rpc('cleanup_expired_oauth_states', {
+    p_now: new Date(now).toISOString(),
+  });
   if (cleanupError) throw new Error('Could not clean expired OAuth state');
 
   const { error } = await admin.from('oauth_states').insert({
