@@ -71,7 +71,7 @@ Keep Row Level Security enabled for user-facing tables. Service-role access is s
 
 ## OAuth connector security migration
 
-For existing Supabase projects, review and apply `supabase/oauth-security.sql` after `supabase/connectors.sql` and before deploying the hardened OAuth callbacks. The migration creates a server-only, expiring, one-time OAuth state store and restricts authenticated access to connector metadata columns. Access/refresh tokens and expiry values remain server-side. Validate the effective grants and callback behavior in a non-production Supabase project before production rollout.
+For existing Supabase projects, review and apply `supabase/oauth-security.sql` after `supabase/connectors.sql` and before deploying the hardened OAuth callbacks. The migration creates a server-only, expiring, one-time OAuth state store, restricts authenticated access to connector metadata columns, and enables a `pg_cron` job that removes expired state rows every 15 minutes in bounded batches. OAuth start routes also prune expired rows opportunistically and apply a best-effort per-instance rate limit; this is not a globally coordinated abuse-control system. Verify the Cron job and effective grants in Supabase, then test the callbacks in a non-production project before production rollout.
 
 ## Deployment
 
